@@ -1,0 +1,894 @@
+---
+title: "Miscommunication in Joint Action: Code for Roche\\*, Paxton\\*, Ibarra, & Tanenhaus (in preparation)"
+output:
+  html_document:
+    keep_md: yes
+    number_sections: yes
+---
+
+This R markdown provides the basis for our manuscript, "Communication breakdown prompts readjustment of informativeness" (Roche\*, Paxton\*, Ibarra, & Tanenhaus, in preparation). The study explores how miscommunication relates to lexical complexity, spatial referents, grounding, and requests for repair.
+
+To run these analyses from scratch, you will need the following files:
+
+* `./data/bloco_corpus_file-2017_03_28.csv`: Contains experimental data.
+* `./code/libraries_and_functions-MJA.r`: Loads in necessary libraries and creates new functions for our analyses.
+* `./dictionaries/spatial_word_list-MJA.csv`: List of spatial words.
+* `./dictionaries/ntlk_stopwords_list-MJA.csv`: List of stopwords, expanded for completeness from Python's NLTK English stopwords list (see `transcription_protocol-MJA.md` for complete details).
+* `./dictionaries/assent_negation_dictionary-MJA.csv`: Dictionary of assent and negation words.
+
+Additional files will be created during the initial run that will help reduce processing time. Several of these files are available as CSVs from the OSF repository listed above.
+
+**Written by**: A. Paxton (University of Connecticut) and J. Roche (Kent State University)
+
+**Date last modified**: 19 May 2017
+
+***
+
+# Corpus preparation
+
+***
+
+## Preliminaries
+
+This section reads in our raw data, provided in long format (i.e., 1 turn per line). Note that our unit of analysis is the turn, which is one talker's single and complete utterance.
+
+```{r prep-prelims, warning = FALSE, error = FALSE, message = FALSE, eval = FALSE}
+
+# clear our workspace
+rm(list=ls())
+
+# read in libraries and create functions
+source('./code/libraries_and_functions-MJA.r')
+
+# read in dataframe
+bloco = read.csv('./data/bloco_corpus_file-2017_03_31.csv',sep=',',
+                 stringsAsFactors=FALSE, header = TRUE)
+
+```
+
+***
+
+## Prepare dictionaries
+
+Here, we read in the dictionaries that will help us categorize spatial words, assent words, negation words, and stopwords.
+
+```{r dictionaries, eval = FALSE}
+
+# read in relevant dictionaries
+ntlk_stopwords = rapply(unname(as.list(read.csv('./dictionaries/nltk_stopwords_list-MJA.csv',
+                                                header=TRUE))), as.character)
+spatial_terms = rapply(unname(as.list(read.csv('./dictionaries/spatial_word_list-MJA.csv',
+                                               header=TRUE))), as.character)
+assent_neg_table = read.csv('./dictionaries/assent_negation_dictionary-MJA.csv',
+                            header=TRUE, stringsAsFactors=FALSE)
+
+# separate assent and negation
+negation_terms = dplyr::filter(assent_neg_table,type=='negation')$word
+assent_terms = dplyr::filter(assent_neg_table,type=='assent')$word
+
+# prep stopword list (excluding spatial, assent, and negation) and make it regex-friendly
+ntlk_stopwords = ntlk_stopwords[!ntlk_stopwords %in%
+                                  c(spatial_terms,assent_terms,negation_terms)]
+ntlk_stopwords = paste0('\\b', ntlk_stopwords, '\\b')
+
+```
+
+
+***
+
+## Clean transcript and derive turn-based language metrics
+
+First, we convert all text to lowercase and strip out punctuation and stopwords. Next, we capture information about the language on each turn:
+
+* `question_mark_count`: Count of question marks per turn.
+* `total_word_count`: Count of total words per turn (i.e., including stopwords).
+* `character_count`: Count of characters in each turn (i.e., including stopwords, excluding spaces, excluding punctuations).
+* `content_word_count`: Count of content words per turn (i.e., excluding stopwords).
+* `spatial_words`: List of all spatial words per each turn (determined by `spatial_terms` list).
+* `spatial_word_count`: Count of spatial words in each turn.
+* `assent_words`: List of all assent words per each turn (determined by `assent_terms` list).
+* `assent_word_count`: Count of assent words in each turn.
+* `negation_words`: List of all negation words per each turn (determined by `negation_terms` list).
+* `negation_word_count`: Count of negation words in each turn.
+* `cleaned_transcript`: Transcription of each turn, excluding stopwords and punctuation.
+* `unique_words`: List of unique words per turn, excluding stopwords.
+* `unique_word_count`: Count of unique words per turn, excluding stopwords.
+
+```{r clean-up-transcript, eval = FALSE}
+
+# clean up the transcript
+bloco = bloco %>% 
+  
+  # count number of question marks per turn
+  mutate(question_mark_count = lapply(Transcript,
+                                      function(x) 
+                                        (sum(unlist(gregexpr("\\?", x))>0)))) %>%
+  
+  # convert to lowercase, strip punctuation, remove multiple spaces, get total word count
+  mutate(cleaned_transcript = gsub("([[:punct:]])", " ", tolower(Transcript))) %>%
+  mutate(cleaned_transcript = gsub(' +',' ',cleaned_transcript)) %>%
+  mutate(total_word_count = wc(cleaned_transcript)) %>%
+  
+  # count character length of turns
+  mutate(character_count = nchar(gsub(' ','',cleaned_transcript))) %>%
+  
+  # separate words, remove stopwords, and count content words
+  mutate(unique_words = strsplit(cleaned_transcript,' ')) %>%
+  mutate(cleaned_transcript = qdap::mgsub(ntlk_stopwords, ' ', 
+                                          cleaned_transcript, fixed=FALSE)) %>%
+  mutate(content_word_count = wc(cleaned_transcript)) %>%
+  
+  # identify and count spatial terms per turn
+  mutate(spatial_words = lapply(unique_words,
+                                function(x) (x[!is.na(match(x,spatial_terms))]))) %>%
+  mutate(spatial_word_count = lapply(spatial_words,length)) %>%
+  
+  # identify and count assent words per turn
+  mutate(assent_words = lapply(unique_words,
+                               function(x) (x[!is.na(match(x,assent_terms))]))) %>%
+  mutate(assent_word_count = lapply(assent_words,length)) %>%
+  
+  # identify and count negation words per turn
+  mutate(negation_words = lapply(unique_words,
+                                 function(x) (x[!is.na(match(x,negation_terms))]))) %>%
+  mutate(negation_word_count = lapply(negation_words,length)) %>%  
+  
+  # identify and count unique words per turn
+  mutate(unique_words = lapply(unique_words,unique)) %>%
+  mutate(unique_word_count = as.integer(lapply(unique_words,length))) %>% 
+  
+  # replace NAs with 0
+  mutate_at(vars(unique_word_count,
+                 total_word_count,
+                 spatial_word_count,
+                 assent_word_count,
+                 negation_word_count), 
+            function(x) (replace(x,NA,0))) %>%
+  
+  # rename matching/mismatching variable
+  dplyr::rename(mismatch_state = lCong)
+
+```
+
+***
+
+## Export prepared corpus file
+
+```{r export-corpus-file, eval = FALSE}
+
+data.table::fwrite(bloco,'./data/prepped_corpus-MJA.csv', 
+       append=FALSE, sep=",", col.names=TRUE, row.names=FALSE)
+
+```
+
+***
+
+# Data preparation
+
+*** 
+
+## Preliminiaries
+
+```{r data-prep-prelims, warning = FALSE, error = FALSE, message = FALSE, eval = FALSE}
+
+# clear our workspace
+rm(list=ls())
+
+# read in libraries and create functions
+source('./code/libraries_and_functions-MJA.r')
+
+# read in dataframe and expand embedded list variables
+bloco_raw = data.table::fread('./data/prepped_corpus-MJA.csv',sep=',',header = TRUE)
+bloco_raw = bloco_raw %>%
+  mutate_at(vars(unique_words,
+                 spatial_words, 
+                 assent_words, 
+                 negation_words), 
+            funs(lapply(., function(x) (unlist(strsplit(x,"\\|"))))))
+
+```
+
+***
+
+## Create turn-based lexical density
+
+Here we calculate our turn-based measure of lexical complexity: `lexical_density` (using Johansson's (2009) definition).
+
+```{r turn-complexity, eval = FALSE}
+
+# convert turn to proportion of total turns
+bloco_raw = bloco_raw %>% ungroup() %>%
+  group_by(Pair) %>%
+  mutate(comp_turn = row_number()) %>%
+  group_by(Pair) %>%
+  mutate(quantile_turn = ntile(comp_turn, 10))
+  
+# calculate proportions of complexity to total words for each turn, then replace any NAs with 0
+bloco_raw = bloco_raw %>%
+  mutate(lexical_density = content_word_count / total_word_count) %>%
+  mutate_at(vars(dplyr::contains("lexical"), dplyr::contains("count")), 
+            funs(lapply(., function(x) as.numeric(ifelse(is.na(x),0,x))))) %>%
+  mutate_at(vars(dplyr::contains("lexical"), dplyr::contains("count")), 
+            as.numeric)
+  
+```
+
+***
+
+## Refactor and create interaction terms
+
+This section centers factor variables, creates interaction terms, and drops irrelevant columns.
+
+We also convert `Grounded` to a binary variable, indicating whether an offer of grounding was accepted in that turn.  (We have very few [`n = 5`] turns in which 2 instances of offered grounding attempts were accepted, but we are interested simply in whether gounding occurred within a turn.)
+
+```{r interactions-and-refactor, eval = FALSE}
+
+# identify which variables should be transformed to factors
+factor_variables = c('Animal','mismatch_state','Phase','Pair','Talker','Grounded','question_used')
+
+# create interaction terms
+bloco_raw = bloco_raw %>% ungroup() %>%
+  
+  # center two-level factor variables
+  mutate(Animal = lapply(Animal, function(x) ((x=='Lizard')*1 - .5))) %>%
+  mutate(Phase = lapply(Phase, function(x) ((x=='Build')*1 - .5))) %>%
+  mutate(Talker = lapply(Talker, function(x) ((x=='NE')*1 - .5))) %>%
+  mutate(mismatch_state = lapply(mismatch_state, function(x) (x - .5))) %>%
+  mutate(Grounded = lapply(Grounded, function(x) ((x > 0) * 1) - .5)) %>%
+  mutate(question_used = lapply(question_mark_count, function(x) ((x > 0) * 1) - .5)) %>%
+
+  # center communication state
+  mutate(CommunicationType = as.numeric(lapply(CommunicationType, function(x)
+              (if (x=='ContinuousSuccess') {
+                x = 1.5
+              } else if (x=='ChangetoSuccess') {
+                x = .5
+              } else if (x=='ChangetoFailure') {
+                x = -.5
+              } else if (x=='ContinuousFailure') {
+                x = -1.5
+              })))) %>%
+  
+  # convert centered factors from lists (generated by lapply) to numeric
+  mutate_each(funs(as.numeric),one_of(factor_variables)) %>%
+  
+  # create interaction terms with grounding, question use, and mismatching
+  mutate(grounded_mismatch = Grounded * mismatch_state) %>%
+  mutate(grounded_question = Grounded * question_used) %>%
+  mutate(mismatch_question = mismatch_state * question_used) %>%
+  mutate(grounded_mismatch_question = mismatch_state * Grounded * question_used) %>%
+  
+  # create a new variable to capture whether the turn was the answer to a question
+  ungroup() %>%
+  group_by(Pair, Phase) %>%
+  mutate(response_to_question = c(-0.5, tail(question_used, -1))) %>%
+  
+  # create interaction terms with grounding, question use, and mismatching
+  mutate(grounded_mismatch = Grounded * mismatch_state) %>%
+  mutate(grounded_response = Grounded * response_to_question) %>%
+  mutate(mismatch_response = mismatch_state * response_to_question) %>%
+  mutate(grounded_mismatch_response = mismatch_state * Grounded * response_to_question) %>%
+    
+  # drop irrelevant variables
+  ungroup() %>%
+  dplyr::select(-one_of(c(character_vars,unused_vars)))
+
+```
+
+***
+
+## Standardize variables
+
+After this step, we will have a raw version of the dataset (`bloco_raw`) and a centered and standardized version of the dataset (`bloco_st`). The latter is useful for obtaining effect sizes from our linear mixed-effects models (see Keith, 2005), and the former is useful for obtaining raw model estimates and generating plots.
+
+```{r refactor-standardize, eval = FALSE}
+
+# center and standardize
+bloco_st = bloco_raw %>% ungroup() %>%
+  mutate_all(funs(as.numeric(scale(as.numeric(.)))))
+
+```
+
+***
+
+## Export analysis-ready datasets
+
+```{r export-analysis-file, eval = FALSE}
+
+# export standardized dataset
+write.csv(bloco_st,'./data/analysis_data_standardized-MJA.csv')
+
+# export raw dataset
+write.csv(bloco_raw,'./data/analysis_data_raw-MJA.csv')
+
+```
+
+***
+
+# Data analysis
+
+***
+
+## Preliminaries
+
+```{r analysis-prelims, warning = FALSE, error = FALSE, message = FALSE}
+
+# clear our workspace
+rm(list=ls())
+
+# read in libraries and create functions
+source('./code/libraries_and_functions-MJA.r')
+
+# read in dataframes
+bloco_raw = read.csv('./data/analysis_data_raw-MJA.csv',sep=',',header = TRUE)
+bloco_st = read.csv('./data/analysis_data_standardized-MJA.csv',sep=',',header = TRUE)
+
+```
+
+***
+
+### Refactorize
+
+Since we're reading in these variables from a new dataset, we need to convert our variables back to factors.
+
+```{r refactorize-for-analysis}
+
+# identify which variables should be factors
+factor_variables = c('Animal','mismatch_state','Phase','Pair','Talker','Grounded','question_used')
+
+# convert to factors in raw and standardized full datasets
+bloco_raw = bloco_raw %>% ungroup() %>%
+  mutate_at(vars(one_of(factor_variables)), factor)
+bloco_st = bloco_st %>% ungroup() %>%
+  mutate_at(vars(one_of(factor_variables)), factor)
+
+# dummy-code mismatch_state for binomial model as DV
+bloco_raw$mismatch_state_DV = factor(as.numeric(bloco_raw$mismatch_state)-1.5)
+bloco_st$mismatch_state_DV = bloco_raw$mismatch_state_DV
+
+```
+
+***
+
+### Create a subset of data without turns with maximal lexical density
+
+```{r create-nomax-dataframe}
+
+# create a raw nomax dataframe
+bloco_raw_nomax = bloco_raw %>% ungroup() %>%
+  dplyr::filter(lexical_density!=1) %>%
+  mutate_at(vars(one_of(factor_variables)), factor)
+
+# create a standardized nomax dataframe
+bloco_st_nomax = bloco_raw_nomax %>%
+  mutate_all(funs(as.numeric(scale(as.numeric(.))))) %>%
+  mutate_at(vars(one_of(factor_variables)), factor)
+
+# dummy-code mismatch_state for binomial model
+bloco_raw_nomax$mismatch_state_DV = factor(as.numeric(bloco_raw_nomax$mismatch_state)-1.5)
+bloco_st_nomax$mismatch_state_DV = bloco_raw_nomax$mismatch_state_DV
+
+```
+
+***
+
+### Create a subset of data without one-word turns
+
+```{r create-no1-dataframe}
+
+# create a raw no1 dataframe
+bloco_raw_no1 = bloco_raw %>% ungroup() %>%
+  dplyr::filter(total_word_count > 1) %>%
+  mutate_at(vars(one_of(factor_variables)), factor)
+
+# create a standardized nomax dataframe
+bloco_st_no1 = bloco_raw_no1 %>%
+  mutate_all(funs(as.numeric(scale(as.numeric(.))))) %>%
+  mutate_at(vars(one_of(factor_variables)), factor)
+
+# dummy-code mismatch_state for binomial model
+bloco_raw_no1$mismatch_state_DV = factor(as.numeric(bloco_raw_no1$mismatch_state)-1.5)
+bloco_st_no1$mismatch_state_DV = bloco_raw_no1$mismatch_state_DV
+
+```
+
+***
+
+## Analyses
+
+Each model is run once with the raw data (`raw`) and once with standardized data (`st`). Coefficients of the standardized model may be interpreted as effect sizes (see Keith, 2005).
+
+***
+
+### Model 1: What language patterns lead to miscommunication?
+
+This model explores how predictive various lexical and pragmatic markers (`question_mark_count`, `spatial_word_count`, `assent_word_count`, `negation_word_count`, and `lexical_density`) are of miscommunication (`mismatch_state`: `-.5` = successful communication, `.5` = miscommunication).
+
+#### Model 1A: With all data
+
+```{r predict-miscomm}
+
+# Model 1A: raw model
+predicting_miscommunication_raw <- glmer(mismatch_state_DV ~ question_used + 
+                                           spatial_word_count + 
+                                           assent_word_count + 
+                                           negation_word_count + 
+                                           lexical_density +
+                                           (1 + spatial_word_count + negation_word_count | Pair) + 
+                                           (1 | Animal) +
+                                           (1 + spatial_word_count + negation_word_count | quantile_turn),
+                                         data = bloco_raw,
+                                         family = "binomial")
+pander_glmer(predicting_miscommunication_raw)
+
+# Model 1A: standardized model
+predicting_miscommunication_st <- glmer(mismatch_state_DV ~ question_used + 
+                                           spatial_word_count + 
+                                           assent_word_count + 
+                                           negation_word_count + 
+                                           lexical_density +
+                                           (1 + spatial_word_count + negation_word_count | Pair) + 
+                                           (1 | Animal) +
+                                           (1 + spatial_word_count + negation_word_count | quantile_turn),
+                                         data = bloco_st,
+                                         family = "binomial")
+pander_glmer(predicting_miscommunication_st)
+
+```
+
+#### Model 1B: Without turns with maximum lexical density
+
+```{r predict-miscomm-nomax}
+
+# Model 1B: raw model
+predicting_miscommunication_raw_nomax <- glmer(mismatch_state_DV ~ question_used + 
+                                                 spatial_word_count + 
+                                                 assent_word_count + 
+                                                 negation_word_count + 
+                                                 lexical_density +
+                                                 (1 + spatial_word_count + negation_word_count | Pair) + 
+                                                 (1 | Animal) +
+                                                 (1 + spatial_word_count + negation_word_count | quantile_turn),
+                                               data = bloco_raw_nomax,
+                                               family = "binomial")
+pander_glmer(predicting_miscommunication_raw_nomax)
+
+# Model 1B: standardized model
+predicting_miscommunication_st_nomax <- glmer(mismatch_state_DV ~ question_used + 
+                                                spatial_word_count + 
+                                                assent_word_count + 
+                                                negation_word_count + 
+                                                lexical_density + 
+                                                (1 + spatial_word_count + negation_word_count | Pair) + 
+                                                (1 | Animal) +
+                                                (1 + spatial_word_count + negation_word_count | quantile_turn),
+                                              data = bloco_st_nomax, 
+                                              family = "binomial")
+pander_glmer(predicting_miscommunication_st_nomax)
+
+```
+
+#### Model 1C: Without one-word turns
+
+We might see that the differences between the models with and without maximally lexically dense turns could largely be driven by turns comprising a single word. We here re-run the model with a dataset excluding 1-word turns.
+
+```{r invisible-report-turn-stats, echo = FALSE}
+
+# how many turns are 1-word turns, and how many turns are maximally lexically dense?
+print(paste('Number of maximally lexically dense turns: ',dim(bloco_raw)[1]-dim(bloco_raw_nomax)[1],sep=''))
+print(paste('Number of one-word turns: ',dim(bloco_raw)[1]-dim(bloco_raw_no1)[1],sep=""))
+
+```
+
+
+```{r predict-miscomm-no1word}
+
+# Model 1C: raw model
+predicting_miscommunication_raw_no1 <- glmer(mismatch_state_DV ~ question_mark_count + 
+                                   spatial_word_count + 
+                                   assent_word_count + 
+                                   negation_word_count + 
+                                   lexical_density + 
+                                   (1 + spatial_word_count + negation_word_count | Pair) + 
+                                   (1 | Animal) +
+                                   (1 + negation_word_count | quantile_turn),
+                                 data = bloco_raw_no1,
+                                 family = "binomial")
+pander_glmer(predicting_miscommunication_raw_no1)
+
+# Model 1C: standardized model
+predicting_miscommunication_st_no1 <- glmer(mismatch_state_DV ~ question_mark_count + 
+                                   spatial_word_count + 
+                                   assent_word_count + 
+                                   negation_word_count + 
+                                   lexical_density + 
+                                   (1 + spatial_word_count + negation_word_count | Pair) + 
+                                   (1 | Animal) +
+                                   (1 + negation_word_count | quantile_turn),
+                                 data = bloco_st_no1,
+                                 family = "binomial")
+pander_glmer(predicting_miscommunication_st_no1)
+
+```
+
+We again see similar patterns to the model excluding maximally lexically dense turns. This prevents us from conclusively discriminating between the impact of 1-word turns and maximal lexical density.
+
+***
+
+### Model 2: What drives lexical density?
+
+Potential other question, reframing: When miscommunicating or successfully communicating, what processes drive lexical density?
+
+***
+
+#### Model 2A: With all data
+
+```{r lexical-density-by-pragmatics}
+
+# raw model
+predicting_density_raw <- lmer(lexical_density ~ Grounded + response_to_question + mismatch_state +
+                                 grounded_mismatch + grounded_response + mismatch_response + 
+                                 grounded_mismatch_response +
+                                 (1 + Grounded + mismatch_state + mismatch_response + grounded_mismatch_response | Pair) +
+                                 (1 + Grounded | Animal) + 
+                                 (1 + Grounded | quantile_turn),
+                               data=bloco_raw, REML=FALSE)
+pander_lme(predicting_density_raw, stats.caption = FALSE)
+
+# standardized model
+predicting_density_st <- lmer(lexical_density ~ Grounded + response_to_question + mismatch_state +
+                                grounded_mismatch + grounded_response + mismatch_response + 
+                                grounded_mismatch_response +
+                                (1 + Grounded + mismatch_state + mismatch_response + grounded_mismatch_response | Pair) +
+                                (1 + Grounded | Animal) + 
+                                (1 + Grounded | quantile_turn),
+                              data=bloco_st, REML=FALSE)
+pander_lme(predicting_density_st, stats.caption = FALSE)
+
+```
+
+#### Model 2B: Without turns with maximum lexical density
+
+```{r lexical-density-by-pragmatics-nomax}
+
+# raw model
+predicting_density_nomax_raw <- lmer(lexical_density ~ Grounded + response_to_question + mismatch_state +
+                                       grounded_mismatch + grounded_response + mismatch_response + 
+                                       grounded_mismatch_response +
+                                       (1 + Grounded + mismatch_state + mismatch_response + grounded_mismatch_response | Pair) +
+                                       (1 + Grounded | Animal) + 
+                                       (1 + Grounded | quantile_turn),
+                                     data=bloco_raw_nomax, REML=FALSE)
+pander_lme(predicting_density_nomax_raw, stats.caption = FALSE)
+
+# standardized model
+predicting_density_nomax_st <- lmer(lexical_density ~ Grounded + response_to_question + mismatch_state +
+                                      grounded_mismatch + grounded_response + mismatch_response + 
+                                      grounded_mismatch_response +
+                                      (1 + Grounded + mismatch_state + mismatch_response + grounded_mismatch_response | Pair) +
+                                      (1 + Grounded | Animal) + 
+                                      (1 + Grounded | quantile_turn),
+                                    data=bloco_st_nomax, REML=FALSE)
+pander_lme(predicting_density_nomax_st, stats.caption = FALSE)
+
+```
+
+#### Model 2C: Without one-word turns
+
+```{r lexical-density-by-pragmatics-no1word}
+
+# Model 2C: raw model
+predicting_density_raw_no1 <- lmer(lexical_density ~ Grounded + response_to_question + mismatch_state +
+                                     grounded_mismatch + grounded_response + mismatch_response + 
+                                     grounded_mismatch_response +
+                                     (1 + Grounded + mismatch_state + mismatch_response | Pair) +
+                                     (1 | Animal) + 
+                                     (1 | quantile_turn),
+                                   data = bloco_raw_no1)
+pander_lme(predicting_density_raw_no1, stats.caption = FALSE)
+
+# Model 2C: standardized model
+predicting_density_st_no1 <- lmer(lexical_density ~ Grounded + response_to_question + mismatch_state +
+                                     grounded_mismatch + grounded_response + mismatch_response + 
+                                     grounded_mismatch_response +
+                                     (1 + Grounded + mismatch_state + mismatch_response | Pair) +
+                                     (1 | Animal) + 
+                                     (1 | quantile_turn),
+                                   data = bloco_st_no1)
+pander_lme(predicting_density_st_no1, stats.caption = FALSE)
+
+```
+
+```{r plot-model-2a-interaction, echo = FALSE}
+
+# plot interactions for lexical density model
+density_2a_interaction_df = Rmisc::summarySE(bloco_raw, 
+                                         measurevar="lexical_density", 
+                                         groupvars=c("response_to_question", 
+                                                     "Grounded"), 
+                                         na.rm = TRUE)
+
+# plot interaction for lexical density model with colorblind-friendly colors
+interaction_2a_plot = ggplot(density_2a_interaction_df, aes(x = response_to_question, 
+                                                        y = lexical_density, 
+                                                        fill = Grounded)) + 
+  geom_bar(stat="identity", position="dodge") + 
+  geom_errorbar(aes(ymax = lexical_density + se,
+                    ymin = lexical_density - se),
+                position = position_dodge(0.9),
+                width = 0.25) +
+  scale_fill_manual(values = c("#7a49a5", "#49A57A"),
+                    name = "Grounding",
+                    breaks = c('-0.5','0.5'),
+                    labels = c('Not Grounded','Grounded')) +
+  ylab('Lexical density') + xlab('Response to Question') + 
+  scale_x_continuous(breaks=c(-0.5,0.5),
+                   labels=c("No", "Yes")) +
+  ggtitle('Lexical density by grounding\nand response to question\n(All data)') +
+  theme(legend.position="bottom",
+        plot.title = element_text(hjust=0.5))
+
+# save for manuscript
+ggsave('./figures/MJA-density_interaction_2a.png',
+       plot = interaction_2a_plot,
+       units = "in", width = 4, height = 4)
+
+# save for knitr
+ggsave('./figures/MJA-density_interaction_2a-knitr.png',
+       plot = interaction_2a_plot,
+       units = "in", width = 4, height = 4, dpi=100)
+
+```
+![**Figure**.](./figures/MJA-density_interaction_2a-knitr.png)
+
+```{r plot-density-data, echo = FALSE}
+
+# all data: plot interactions for lexical density model
+all_density_model_df = Rmisc::summarySE(bloco_raw, 
+                                        measurevar="lexical_density", 
+                                        groupvars=c("response_to_question", "Grounded", "mismatch_state"), 
+                                        na.rm = TRUE)
+all_density_plot = ggplot(all_density_model_df, aes(x = response_to_question, 
+                                                    y = lexical_density, 
+                                                    fill = mismatch_state)) + 
+  geom_bar(stat="identity", position="dodge") + 
+  facet_wrap( ~ Grounded,
+              labeller = as_labeller(c('-0.5' = 'Not\ngrounded',
+                                       '0.5' = 'Grounded'))) +
+  geom_errorbar(aes(ymax = lexical_density + se,
+                    ymin = lexical_density - se),
+                position = position_dodge(0.9),
+                width = 0.25) +
+  scale_fill_manual(values = c("#57bfc6", "#c65e57"),
+                    breaks = c('-0.5','0.5'),
+                    labels = c('Matching','Mismatching')) +
+  ylab('Lexical density') + xlab(' ') + 
+  scale_x_continuous(breaks=c(-0.5,0.5),
+                     labels=c("No","Yes")) +
+  theme(legend.position = "none") +
+  ggtitle("\n\nAll data") +
+  coord_cartesian(ylim=c(0,.9))
+
+# nomax data
+nomax_density_model_df = Rmisc::summarySE(bloco_raw_nomax, 
+                                          measurevar="lexical_density", 
+                                          groupvars=c("response_to_question", "Grounded", "mismatch_state"), 
+                                          na.rm = TRUE)
+nomax_density_plot = ggplot(nomax_density_model_df, aes(x = response_to_question, 
+                                                        y = lexical_density, 
+                                                        fill = mismatch_state)) + 
+  geom_bar(stat="identity", position="dodge") + 
+  facet_wrap( ~ Grounded,
+              labeller = as_labeller(c('-0.5' = 'Not\ngrounded',
+                                       '0.5' = 'Grounded'))) +
+  geom_errorbar(aes(ymax = lexical_density + se,
+                    ymin = lexical_density - se),
+                position = position_dodge(0.9),
+                width = 0.25) +
+  scale_fill_manual(values = c("#57bfc6", "#c65e57"),
+                    breaks = c('-0.5','0.5'),
+                    labels = c('Matching','Mismatching')) +
+  ylab(' ') + xlab('Response to Question') + 
+  scale_x_continuous(breaks=c(-0.5,0.5),
+                   labels=c("No","Yes")) +
+  ggtitle("\nWithout maximum\nlexical density") +
+  theme(legend.position = "none") +
+  coord_cartesian(ylim=c(0,.9))
+
+# no1 data data
+no1_density_model_df = Rmisc::summarySE(bloco_raw_no1, 
+                                           measurevar="lexical_density", 
+                                           groupvars=c("response_to_question", "Grounded", "mismatch_state"), 
+                                           na.rm = TRUE)
+no1_density_plot = ggplot(no1_density_model_df, aes(x = response_to_question, 
+                                                          y = lexical_density, 
+                                                          fill = mismatch_state)) + 
+  geom_bar(stat="identity", position="dodge") + 
+  facet_wrap( ~ Grounded,
+              labeller = as_labeller(c('-0.5' = 'Not\ngrounded',
+                                       '0.5' = 'Grounded'))) +
+  geom_errorbar(aes(ymax = lexical_density + se,
+                    ymin = lexical_density - se),
+                position = position_dodge(0.9),
+                width = 0.25) +
+  scale_fill_manual(values = c("#57bfc6", "#c65e57"),
+                    breaks = c('-0.5','0.5'),
+                    labels = c('Matching','Mismatching')) +
+  ylab(' ') + xlab(' ') + 
+  scale_x_continuous(breaks=c(-0.5,0.5),
+                   labels=c("No","Yes")) +
+  theme(legend.position = "none") +
+  ggtitle("\nWithout one-word\nturns") +
+  coord_cartesian(ylim=c(0,.9))
+
+# create another plot just for the legend
+legend_plot = ggplot(no1_density_model_df, aes(x = response_to_question, 
+                                                  y = lexical_density, 
+                                                  fill = mismatch_state)) + 
+  geom_bar(stat="identity", position="dodge") + 
+  facet_wrap( ~ Grounded,
+              labeller = as_labeller(c('-0.5' = 'Not\ngrounded',
+                                       '0.5' = 'Grounded'))) +
+  geom_errorbar(aes(ymax = lexical_density + se,
+                    ymin = lexical_density - se),
+                position = position_dodge(0.9),
+                width = 0.25) +
+  scale_fill_manual(values = c("#57bfc6", "#c65e57"),
+                    name = "Workspace Match",
+                    breaks = c('-0.5','0.5'),
+                    labels = c('Matching','Mismatching')) +
+  ylab(' ') + xlab(' ') + 
+  scale_x_continuous(breaks=c(-0.5,0.5),
+                     labels=c("No","Yes")) +
+  ggtitle("Without one-word\nturns") +
+  coord_cartesian(ylim=c(0,.9))
+
+# create a master legend
+master_legend = gtable_filter(ggplot_gtable(
+  ggplot_build(legend_plot + theme(legend.position="bottom"))),
+  "guide-box")
+
+# save to file for manuscript submission
+ggsave('./figures/MJA-density_figure.png',
+       units = "in", width = 8, height = 5,
+       grid.arrange(
+         top=textGrob("Effects of grounding, responding to a question,\nand workspace state on lexical density",
+                      gp=gpar(fontsize=14)),
+         all_density_plot,
+         nomax_density_plot,
+         no1_density_plot,
+         bottom=master_legend,
+         ncol = 3
+       ))
+
+# save to file for knitr submission
+ggsave('./figures/MJA-density_figure-knitr.png',
+       units = "in", width = 8, height = 5, dpi=100,
+       grid.arrange(
+         top=textGrob("Effects of grounding, responding to a question,\nand workspace state on lexical density",
+                      gp=gpar(fontsize=14)),
+         all_density_plot,
+         nomax_density_plot,
+         no1_density_plot,
+         bottom=master_legend,
+         ncol = 3
+       ))
+
+```
+
+![**Figure**.](./figures/MJA-density_figure-knitr.png)
+
+***
+
+### Model 3: Assent in maximally lexically dense turns
+
+The results of Models 2A (all data) and 2B (excluding maximally lexically dense turns) are inconsistent with one another. Our expectations from previous literature would be more supportive of the results from Model 2B, given the direction of the interaction term between `Grounded` and `response_to_question` in Model 2A. This may suggest that the maximally lexically dense turns are affecting these patterns.
+
+Since all turns in this subset of the data are maximally lexically dense, we want to instead explore whether the turns are related to whether the turn completely comprises `assent` words.
+
+```{r create-allmax-dataframe}
+
+# create a raw allmax dataframe
+bloco_raw_allmax = bloco_raw %>%
+  dplyr::filter(lexical_density==1) %>%
+  mutate(assent_turn = (total_word_count == assent_word_count)*1) %>%
+  mutate_at(vars(one_of(factor_variables)), factor)
+
+# create a standardized allmax dataframe
+bloco_st_allmax = bloco_raw_allmax %>%
+  mutate_all(funs(as.numeric(scale(as.numeric(.))))) %>%
+  mutate(assent_turn = (assent_turn>0)*1) %>%
+  mutate_at(vars(one_of(factor_variables)), factor)
+
+```
+
+```{r invisible-print-assent numbers, echo = FALSE}
+
+# what proportion of maximally lexically dense turns are entirely assent words?
+print(paste('Proportion of MLD turns that are assent turns: ', 
+            round(dim(bloco_raw_allmax[bloco_raw_allmax$assent_turn==1,])[1]/dim(bloco_raw_allmax)[1],2), sep=''))
+print(paste('Proportion of one-word turns that are assent turns: ', 
+            round(dim(bloco_raw_allmax[bloco_raw_allmax$assent_turn==1,])[1]/dim(bloco_raw[bloco_raw$total_word_count==1,])[1],2), sep=''))
+
+```
+
+Since most maximally lexically dense turns and most one-word turns comprise only assent words (which we call "assent turns"), we hypothesize that some of the dynamics of maximally lexically dense turns may be driven by effects of the use of assent words.  Here we follow up on Models 2A and 2B by predicting assent turns with the same variables. 
+
+Plotting of the data revealed that there were insufficient data to explore interactions with `response_to_question`. (See table below.) For maximal parity, we retain the `response_to_question` main term but do not include the interactions.
+
+```{r explore-undercounts, echo = FALSE}
+
+# what distribution of data do we have?
+pander(plyr::count(bloco_raw_allmax,
+            c('mismatch_state',
+              'Grounded',
+              'response_to_question')),
+       style = 'rmarkdown')
+
+```
+
+```{r lexical-density-by-pragmatics-allmax}
+
+# Model 2D: raw model
+predicting_density_allmax_raw <- glm(assent_turn ~ Grounded + response_to_question + mismatch_state +
+                                        grounded_mismatch,
+                                      data=bloco_raw_allmax,
+                                      family = "binomial")
+pander_glmer(predicting_density_allmax_raw)
+
+# Model 2D: standardized model
+predicting_density_allmax_st <- glm(assent_turn ~ Grounded + response_to_question + mismatch_state +
+                                      grounded_mismatch,
+                                    data = bloco_st_allmax,
+                                    family = "binomial")
+pander_glmer(predicting_density_allmax_st)
+
+```
+
+```{r plot-assent-interactions, echo = FALSE}
+
+# plot interactions for assent model
+allmax_model_df = Rmisc::summarySE(bloco_raw_allmax, 
+                                        measurevar="assent_turn", 
+                                        groupvars=c("Grounded", "mismatch_state"), 
+                                        na.rm = TRUE)
+
+assent_allmax_plot = ggplot(allmax_model_df, aes(x = Grounded, 
+                                               y = assent_turn, 
+                                               fill = mismatch_state)) + 
+  geom_bar(stat="identity", position="dodge") + 
+  geom_errorbar(aes(ymax = assent_turn + se,
+                    ymin = assent_turn - se),
+                position = position_dodge(0.9),
+                width = 0.25) +
+  scale_fill_manual(values = c("#57bfc6", "#c65e57"),
+                    breaks = c('-0.5','0.5'),
+                    labels = c('Matching','Mismatching'),
+                    name = "Workspace state") +
+  ylab('Assent likelihood') + xlab('Grounded') + 
+  scale_x_discrete(breaks=c('-0.5','0.5'),
+                   labels=c("No","Yes")) +
+  ggtitle("Assent turns by grounding and workspace state") +
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust=0.5))
+
+# save to file for manuscript submission
+ggsave('./figures/MJA-model2D_assent_figure.png',
+       plot = assent_allmax_plot,
+       units = "in", width = 5, height = 4)
+
+# save to file for knitr submission
+ggsave('./figures/MJA-model2D_assent_figure-knitr.png',
+       plot = assent_allmax_plot,
+       units = "in", width = 5, height = 4, dpi=100)
+
+```
+
+![**Figure**.](./figures/MJA-model2D_assent_figure-knitr.png)
+
+***
+
+# References
+
+1. Johansson, V. (2009). Lexical diversity and lexical density in speech and writing: A developmental perspective. *Working Papers in Linguistics*, *53*, 61-79.
+1. Keith, T. Z. (2005). *Multiple regression and beyond*. Boston, MA: Pearson Education.
