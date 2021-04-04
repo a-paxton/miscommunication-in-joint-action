@@ -1,4 +1,4 @@
-# Miscommunication in Joint Action: Code for Roche*, Paxton*, Ibarra, & Tanenhaus (2021)
+# Miscommunication in Joint Action: Code for Paxton*, Roche*, Ibarra, & Tanenhaus (2021)
 
 This repo contains the code for the analyses presented in our manuscript,
 "Predictors of miscommunication in verbal communication during collaborative
